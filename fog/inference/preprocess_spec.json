@@ -1,0 +1,92 @@
+{
+  "spec_version": "1.0",
+  "description": "Preprocessing + feature schema for fog inference (RandomForest binary IDS).",
+  "input": {
+    "features_field": "features",
+    "accept_flat_payload": true
+  },
+  "mode": "binary",
+  "positive_label": "abnormal",
+  "feature_order": [
+    "rate",
+    "sttl",
+    "sload",
+    "dload",
+    "ct_srv_src",
+    "ct_state_ttl",
+    "ct_dst_ltm",
+    "ct_src_dport_ltm",
+    "ct_dst_sport_ltm",
+    "ct_dst_src_ltm",
+    "ct_src_ltm",
+    "ct_srv_dst",
+    "state_CON",
+    "state_INT"
+  ],
+  "defaults": {
+    "rate": 0.0,
+    "sttl": 0.0,
+    "sload": 0.0,
+    "dload": 0.0,
+    "ct_srv_src": 0.0,
+    "ct_state_ttl": 0.0,
+    "ct_dst_ltm": 0.0,
+    "ct_src_dport_ltm": 0.0,
+    "ct_dst_sport_ltm": 0.0,
+    "ct_dst_src_ltm": 0.0,
+    "ct_src_ltm": 0.0,
+    "ct_srv_dst": 0.0,
+    "state_CON": 0.0,
+    "state_INT": 0.0
+  },
+  "scaler": {
+    "type": "minmax",
+    "strict": true,
+    "min": {
+      "rate": null,
+      "sttl": null,
+      "sload": null,
+      "dload": null,
+      "ct_srv_src": null,
+      "ct_state_ttl": null,
+      "ct_dst_ltm": null,
+      "ct_src_dport_ltm": null,
+      "ct_dst_sport_ltm": null,
+      "ct_dst_src_ltm": null,
+      "ct_src_ltm": null,
+      "ct_srv_dst": null,
+      "state_CON": 0.0,
+      "state_INT": 0.0
+    },
+    "max": {
+      "rate": null,
+      "sttl": null,
+      "sload": null,
+      "dload": null,
+      "ct_srv_src": null,
+      "ct_state_ttl": null,
+      "ct_dst_ltm": null,
+      "ct_src_dport_ltm": null,
+      "ct_dst_sport_ltm": null,
+      "ct_dst_src_ltm": null,
+      "ct_src_ltm": null,
+      "ct_srv_dst": null,
+      "state_CON": 1.0,
+      "state_INT": 1.0
+    },
+    "clip": {
+      "enabled": true,
+      "min": 0.0,
+      "max": 1.0
+    }
+  },
+  "label_map": {
+    "0": "abnormal",
+    "1": "normal"
+  },
+  "threshold": 0.5,
+  "telemetry": {
+    "include_feature_hash": true,
+    "include_feature_vector": false
+  }
+}
