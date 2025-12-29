@@ -2,70 +2,73 @@ name: deploy-dev
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
     paths:
       - "cloud/**"
       - "shared/**"
-      - ".github/workflows/**"
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
-  id-token: write
-
-env:
-  AR_REPO: fog-dev
-  IMAGE_NAME: cloud-api
+      - ".github/workflows/deploy-dev.yaml"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    permissions:
+      contents: read
+      id-token: write
 
-      - name: Auth to GCP via OIDC
-        uses: google-github-actions/auth@v2
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
+      GCP_SA_EMAIL: ${{ vars.GCP_SA_EMAIL }}
+      PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+      AR_REPO: "fog-dev"
+      IMAGE_NAME: "cloud-api"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SA_EMAIL }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker auth for Artifact Registry
+      - name: Configure Docker for Artifact Registry
         run: |
-          gcloud config set project "${{ secrets.GCP_PROJECT }}"
-          gcloud auth configure-docker "${{ secrets.GCP_REGION }}-docker.pkg.dev" --quiet
-
-      - name: Setup Pulumi
-        uses: pulumi/setup-pulumi@v3
-
-      - name: Pulumi bootstrap (infra base)
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: |
-          cd cloud/infra/pulumi
-          pulumi stack select "${{ secrets.PULUMI_STACK_DEV }}"
-          pulumi config set gcp:project "${{ secrets.GCP_PROJECT }}"
-          pulumi config set gcp:region "${{ secrets.GCP_REGION }}"
-          pulumi config set deployCloudRun false
-          pulumi up --yes
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Build & Push Cloud API image
+        id: build
         run: |
-          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${AR_REPO}/${IMAGE_NAME}:${GITHUB_SHA}"
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           docker build -t "$IMAGE" -f cloud/app/Dockerfile .
           docker push "$IMAGE"
 
-      - name: Deploy Cloud Run with new image
+      - name: Setup Node (Pulumi program deps)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Pulumi program deps
+        working-directory: cloud/infra/pulumi
+        run: npm ci
+
+      - name: Pulumi Up (dev)
+        uses: pulumi/actions@v6
+        with:
+          command: up
+          stack-name: ${{ env.PULUMI_STACK }}
+          work-dir: cloud/infra/pulumi
+          # Esto te evita “pulumi config set ...” en pasos separados
+          config-map: |
+            cloudApiImage:
+              value: "${{ steps.build.outputs.image }}"
+            deployCloudRun:
+              value: "true"
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: |
-          cd cloud/infra/pulumi
-          pulumi stack select "${{ secrets.PULUMI_STACK_DEV }}"
-          pulumi config set deployCloudRun true
-          pulumi config set cloudApiImage "${IMAGE}"
-          pulumi up --yes
-          pulumi stack output cloudApiUrl
-
