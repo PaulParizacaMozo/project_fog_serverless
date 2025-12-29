@@ -1,0 +1,71 @@
+name: deploy-dev
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "cloud/**"
+      - "shared/**"
+      - ".github/workflows/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AR_REPO: fog-dev
+  IMAGE_NAME: cloud-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to GCP via OIDC
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry
+        run: |
+          gcloud config set project "${{ secrets.GCP_PROJECT }}"
+          gcloud auth configure-docker "${{ secrets.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Setup Pulumi
+        uses: pulumi/setup-pulumi@v3
+
+      - name: Pulumi bootstrap (infra base)
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: |
+          cd cloud/infra/pulumi
+          pulumi stack select "${{ secrets.PULUMI_STACK_DEV }}"
+          pulumi config set gcp:project "${{ secrets.GCP_PROJECT }}"
+          pulumi config set gcp:region "${{ secrets.GCP_REGION }}"
+          pulumi config set deployCloudRun false
+          pulumi up --yes
+
+      - name: Build & Push Cloud API image
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${AR_REPO}/${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker build -t "$IMAGE" -f cloud/app/Dockerfile .
+          docker push "$IMAGE"
+
+      - name: Deploy Cloud Run with new image
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: |
+          cd cloud/infra/pulumi
+          pulumi stack select "${{ secrets.PULUMI_STACK_DEV }}"
+          pulumi config set deployCloudRun true
+          pulumi config set cloudApiImage "${IMAGE}"
+          pulumi up --yes
+          pulumi stack output cloudApiUrl
+
