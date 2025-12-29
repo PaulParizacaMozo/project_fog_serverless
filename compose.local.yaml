@@ -1,0 +1,34 @@
+services:
+  cloud:
+    build:
+      context: .
+      dockerfile: cloud/app/Dockerfile
+    ports:
+      - "8081:8080"
+    environment:
+      - INGEST_TOKEN=dev-token
+      - STORE_PATH=/data/store.json
+      - WEB_DIR=/app/web
+    volumes:
+      - cloud_data:/data
+    restart: unless-stopped
+
+  fog:
+    build:
+      context: .
+      dockerfile: fog/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - FOG_ID=fog-01
+      - WINDOW_MS=10000
+      - SINK_MODE=http
+      - CLOUD_BASE_URL=http://cloud:8080
+      - CLOUD_INGEST_TOKEN=dev-token
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+    depends_on:
+      - cloud
+    restart: unless-stopped
+
+volumes:
+  cloud_data:

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Fog → Cloud Dashboard (Local)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #0b1020; color: #e7e9ee; }
+    header { padding: 16px 20px; border-bottom: 1px solid #1a2340; display: flex; align-items: baseline; gap: 14px; }
+    header h1 { font-size: 18px; margin: 0; }
+    header .meta { font-size: 12px; color: #aab1c6; }
+    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; padding: 14px; }
+    .card { background: #0f1730; border: 1px solid #1a2340; border-radius: 12px; padding: 12px; }
+    .card h2 { font-size: 13px; margin: 0 0 10px 0; color: #cfd6ea; }
+    .row { display: flex; gap: 14px; flex-wrap: wrap; }
+    .pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #27335c; color: #cfd6ea; }
+    canvas { width: 100%; height: 300px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border-bottom: 1px solid #1a2340; padding: 8px 6px; text-align: left; vertical-align: top; }
+    th { color: #aab1c6; font-weight: 600; }
+    .right { text-align: right; }
+    select { background: #0b1020; color: #e7e9ee; border: 1px solid #27335c; border-radius: 8px; padding: 6px 8px; }
+    .small { font-size: 12px; color: #aab1c6; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+  <header>
+    <h1>Fog → Cloud Dashboard (Local)</h1>
+    <div class="meta" id="statusText">Initializing…</div>
+    <div style="margin-left:auto; display:flex; gap:10px; align-items:center;">
+      <span class="small">Range</span>
+      <select id="rangeSel">
+        <option value="5">Last 5 min</option>
+        <option value="30">Last 30 min</option>
+        <option value="360">Last 6 h</option>
+      </select>
+      <span class="pill" id="healthPill">health: --</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Network State (10s windows, event_time UTC)</h2>
+      <canvas id="timelineChart"></canvas>
+      <div class="row" style="margin-top:10px;">
+        <span class="pill" id="p50Pill">p50 lag: --</span>
+        <span class="pill" id="p95Pill">p95 lag: --</span>
+        <span class="pill" id="suppPill">benign suppressed: --</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Alert Feed (latest 50)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Time (UTC)</th>
+            <th>Sev</th>
+            <th>Cat</th>
+            <th class="right">Lag ms</th>
+          </tr>
+        </thead>
+        <tbody id="alertBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card" style="grid-column: 1 / span 2;">
+      <h2>Top Attack Categories (rolling over fetched windows)</h2>
+      <canvas id="topChart"></canvas>
+    </div>
+  </div>
+
+<script>
+  const statusText = document.getElementById("statusText");
+  const healthPill = document.getElementById("healthPill");
+  const rangeSel = document.getElementById("rangeSel");
+  const p50Pill = document.getElementById("p50Pill");
+  const p95Pill = document.getElementById("p95Pill");
+  const suppPill = document.getElementById("suppPill");
+
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    return d.toISOString().substring(11, 19);
+  }
+  function nowMs() { return Date.now(); }
+
+  async function fetchJson(url) {
+    const r = await fetch(url, { method: "GET" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  }
+
+  const timelineChart = new Chart(document.getElementById("timelineChart"), {
+    type: "bar",
+    data: { labels: [], datasets: [
+      { label: "events_total", data: [] },
+      { label: "alerts_total", data: [] }
+    ]},
+    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+  });
+
+  const topChart = new Chart(document.getElementById("topChart"), {
+    type: "bar",
+    data: { labels: [], datasets: [{ label: "alerts", data: [] }] },
+    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+  });
+
+  function setHealth(ok, msg) {
+    statusText.textContent = msg;
+    healthPill.textContent = ok ? "health: OK" : "health: DEGRADED";
+  }
+
+  function renderAlerts(alerts) {
+    const body = document.getElementById("alertBody");
+    body.innerHTML = "";
+    for (const a of alerts) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${fmtTime(a.event_time || a.received_at || new Date().toISOString())}</td>
+        <td>${a.severity || "-"}</td>
+        <td>${a.attack_cat || "-"}</td>
+        <td class="right">${a.pipeline_lag_ms ?? "-"}</td>
+      `;
+      body.appendChild(tr);
+    }
+  }
+
+  function aggregateTopCats(summaries) {
+    const counts = new Map();
+    for (const s of summaries) {
+      const cat = s.top_attack_cat;
+      if (!cat) continue;
+      counts.set(cat, (counts.get(cat) || 0) + (s.alerts_total || 0));
+    }
+    return Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]).slice(0, 10);
+  }
+
+  function updateKpis(summaries) {
+    if (!summaries.length) return;
+    const last = summaries[summaries.length - 1];
+    p50Pill.textContent = `p50 lag: ${last.pipeline_lag_ms_p50 ?? "--"}`;
+    p95Pill.textContent = `p95 lag: ${last.pipeline_lag_ms_p95 ?? "--"}`;
+    suppPill.textContent = `benign suppressed: ${last.benign_suppressed ?? "--"}`;
+  }
+
+  async function refresh() {
+    const mins = parseInt(rangeSel.value, 10);
+    const sinceMs = nowMs() - mins * 60 * 1000;
+
+    try {
+      const [summaries, alerts] = await Promise.all([
+        fetchJson(`/api/summaries?since_ms=${sinceMs}&limit=600`),
+        fetchJson(`/api/alerts?limit=50`)
+      ]);
+
+      timelineChart.data.labels = summaries.map(s => fmtTime(s.window_start));
+      timelineChart.data.datasets[0].data = summaries.map(s => s.events_total || 0);
+      timelineChart.data.datasets[1].data = summaries.map(s => s.alerts_total || 0);
+      timelineChart.update();
+
+      renderAlerts(alerts);
+
+      const top = aggregateTopCats(summaries);
+      topChart.data.labels = top.map(x => x[0]);
+      topChart.data.datasets[0].data = top.map(x => x[1]);
+      topChart.update();
+
+      updateKpis(summaries);
+      setHealth(true, `Updated ${new Date().toISOString()} | windows=${summaries.length} alerts=${alerts.length}`);
+    } catch (e) {
+      setHealth(false, `Fetch failed: ${e.message}`);
+    }
+  }
+
+  setInterval(refresh, 2000);
+  rangeSel.addEventListener("change", refresh);
+  refresh();
+</script>
+</body>
+</html>
+

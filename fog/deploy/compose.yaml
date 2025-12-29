@@ -1,0 +1,17 @@
+services:
+  fog:
+    build:
+      context: ../..
+      dockerfile: fog/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - FOG_ID=${FOG_ID:-fog-01}
+      - WINDOW_MS=${WINDOW_MS:-10000}
+      - SINK_MODE=${SINK_MODE:-http}
+      - CLOUD_BASE_URL=${CLOUD_BASE_URL}
+      - CLOUD_INGEST_TOKEN=${CLOUD_INGEST_TOKEN}
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+    restart: unless-stopped
+
+

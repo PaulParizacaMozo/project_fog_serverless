@@ -1,0 +1,7 @@
+config:
+  gcp:project: projectserverless-482621
+  gcp:region: us-central1
+  project-fog-serverless:ingestToken:
+    secure: AAABANIFwq31xcTLdNGsJ9cFFPGUEFoT0ZhC7iHIjbrDWF/MnnTnEYH9UFzAlnLz3JjFLt+B0SvT7EprDn3T4HcsB/d8fth1j+r+o2l6yoc=
+  project-fog-serverless:deployCloudRun: "true"
+  project-fog-serverless:cloudApiImage: us-central1-docker.pkg.dev/projectserverless-482621/fog-dev/cloud-api:v1.1

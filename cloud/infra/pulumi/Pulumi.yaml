@@ -1,0 +1,3 @@
+name: project-fog-serverless
+runtime: nodejs
+description: Serverless Cloud API + Firestore + Secret + Web bucket for Fog demo
